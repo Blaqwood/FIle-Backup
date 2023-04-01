@@ -1,0 +1,20 @@
+BEGIN
+    DECLARE
+        input AS STRING
+        output AS STRING
+        seconds AS INTEGER
+        backup_count AS INTEGER
+    PRINT "Enter the file to backup"
+    READ input
+    PRINT "Enter the destination path"
+    READ output
+    PRINT "Enter the time between each backup"
+    READ time
+    WRITEFILE input, output TO log
+    WHILE TRUE DO
+        COPYFILE input, output
+        COUNTTIME seconds
+        backup_count = backup_count + 1
+        WRITEFILE CURRENT_DATE, CURRENT_TIME TO log
+    ENDWHILE
+END

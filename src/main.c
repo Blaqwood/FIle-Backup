@@ -2,57 +2,76 @@
 #include <stdlib.h>
 #define _POSIX_C_SOURCE 199309L
 #include <time.h>
-#include <unistd.h>
 #include <string.h>
 #include <ctype.h>
+#include <libgen.h>
+#ifdef WIN32                /*                              */
+#include <io.h>             /*                              */
+#define F_OK 0              /*  This section is to          */
+#define access _access      /*  make sure that a certain    */
+#else                       /*  function I used works       */
+#include <unistd.h>         /*  on all platforms            */
+#endif                      /*                              */
 
 int check_arguments(int argc, char **argv); // Checks if the user passed the correct arguments
 void print_help(char *program_path); // Prints a help message
-FILE **open_files(char *input_file_path, char *output_file_path); // Creates the file pointers from filepaths
+int copy_file(char *input_path, char *output_path); // copies data from one file to another
 void timer(int n); // counts n seconds
-int copy_file(FILE *input, FILE *output); // copies the files
-char *trim_file_path(char *path); // removes the long parts of a path and fives just the filename eg. C:\my_file.txt -> my_file
-int reset_file(FILE *file); //
+void log_backup(int is_error); // logs each interval that the file is save to "backup_log.txt"
+void log_init();
+
+const char *LOGFILE = "backup_log.txt";
 
 int main(int argc, char **argv) {
-	FILE *input;
-	FILE *output;
+	char *input_file_path;
+	char *output_file_path;
 	int seconds;
+	int backups = 0;
 
 	if (check_arguments(argc, argv) == 1) {
 		print_help(argv[0]);
 		return 2;
 	}
-
-	FILE **files = open_files(argv[1], argv[2]);
-	if (files == NULL) {
-		puts("An error occurred\n");
-		return 1;
-	}
-	FILE *input = files[0];
-	FILE *output = files[1];
+	
+	input_file_path = argv[1];
+	output_file_path = argv[2];
+	seconds = atoi(argv[3]);
+	log_init(input_file_path, output_file_path);
 	
 	while (1) {
+		// copying the file
+		int error = copy_file(input_file_path, output_file_path);
+
+		// count the user specified interval
 		timer(seconds);
+
+		if (error) {
+			puts("Error: Failed to copy file\n");
+		}
+
+		puts("Successfully backed up file\n");
+		printf("Backup no. %d\n", backups + 1);
+		backups += 1;
+		log_backup(error);
 	}
 
 	return 0;
 }
 
 int check_arguments(int argc, char **argv) {
-	int is_positive_integer(char *string) {
-		if (string[0] == '-') {
-			return 0;
+	// check if all values are strings longer than 1
+	for (int i = 0; i < strlen(argv[3]); i += 1) {
+		if (strlen(argv[i]) == 0) {
+			return 1;
 		}
-		for (int i = 0; i < strlen(argv[3]); i += 1) {
-			if (!isdigit(argv[3][i])) {
-				return 0;
-			}
-		}
+	}
+	// check if all options were entered
+	if (argc != 4) {
+		puts("Error: Wrong arguments provided\n");
 		return 1;
 	}
-
-	if (argc != 4 || argv[3] == "0" || !is_positive_integer(argv[3])) {
+	// check if the time is greater than 0
+	if (atoi(argv[3]) <= 0) {
 		puts("Error: Time should be at least 1 second");
 		return 1;
 	}
@@ -61,73 +80,72 @@ int check_arguments(int argc, char **argv) {
 }
 
 void print_help(char *program_path) {
+	puts("\nHELP:");
 	puts("A program to backup files periodically in case of potential data loss\n");
 	printf("%s <input file> <output file> <time in seconds>\n");
 	puts("Example: backup.exe C:\\homework.txt C:\\Users\\Me\\Documents\\homework_backup.txt 180\n");
 }
 
-
-FILE **open_files(char *input_file_path, char *output_file_path) {
-	FILE **files = NULL;
-	FILE *input_file = fopen(input_file_path, "rb");
-	FILE *output_file = fopen(output_file_path, "wb");
-
-	if (input_file == NULL) {
-		printf("failed to open %s\n", input_file_path);
-		return files;
-	}
-	if (output_file == NULL) {
-		printf("failed to create %s\n", output_file_path);
-		return files;
-	}
-
-	files = malloc(2 * sizeof(FILE));
-	if (files == NULL) {
-		puts("memory error\n");
-	}
-	files[0] = input_file;
-	files[1] = output_file;
-	return files;
-}
-
 void timer(int n) {
     struct timespec start, end;
     clock_gettime(CLOCK_MONOTONIC, &start);
-
-    for (; n > 0; n -= 1) {
+	
+	// pause th program for each iteration for 1 second
+    for (int i = n; i > 0; i -= 1) {
         sleep(1);
     }
 
     clock_gettime(CLOCK_MONOTONIC, &end);
 }
 
-int copy_file(FILE *input, FILE *output) {
-    int ch;
-    while ((ch = fgetc(input)) != EOF) {
-        fputc(ch, output);
-    }
-	fseek(input, 0L, SEEK_SET);
-	fseek(output, 0L, SEEK_SET);
+int copy_file(char *input, char *output) {
+	FILE *input_file = fopen(input, "rb");
+	FILE *output_file = fopen(output, "wb");
+	int ch;
+
+	if (input_file == NULL || output_file == NULL) {
+		return 1;
+	}
+
+	// read a character from input and put it in output to the end of the file
+    while ((ch = fgetc(input_file)) != EOF) {
+        if (fputc(ch, output_file) == EOF) {
+			puts("Failed to write file\n");
+		}
+    }	
+
+	fclose(input_file);
+	fclose(output_file);
 
 	return 0;
 }
 
-char *trim_file_path(char *path) {
-    char* filename = strrchr(filepath, '/'); // Find last occurrence of '/'
 
-    if (filename == NULL) {
-        filename = strrchr(filepath, '\\'); // Find last occurrence of '\'
-        if (filename == NULL) {
-            filename = filepath;
-        } else {
-            filename++; // Move past '\'
-        }
-    } else {
-        filename++; // Move past '/'
-    }
-    char* extension = strrchr(filename, '.'); // Find last occurrence of '.'
-    if (extension != NULL) {
-        *extension = '\0'; // Replace '.' with '\0' to remove extension
-    }
-    return filename;
+void log_init(const char *input, const char *output) {
+	FILE *file = fopen(LOGFILE, "w");
+	if (file == NULL) {
+		return;
+	}
+
+	fprintf(file, "File Backup\n\n\tINPUT: %s\n\tOUTPUT: %s\n", input, output);
+	fclose(file);
+}
+
+void log_backup(int is_error) {
+	time_t t = time(NULL);
+	struct tm tm = *localtime(&t);
+	FILE *file = fopen(LOGFILE, "a");
+
+	if (file == NULL) {
+		return;
+	}
+
+	// save the date and time to the log file
+	fprintf(file, "now: %d-%02d-%02d %02d:%02d:%02d", tm.tm_year + 1900, tm.tm_mon + 1, tm.tm_mday, tm.tm_hour, tm.tm_min, tm.tm_sec);
+	if (is_error) {
+		fputs(" (Error)", file);
+	}
+
+	fputc('\n', file);
+	fclose(file);
 }
